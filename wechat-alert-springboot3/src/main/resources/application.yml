@@ -1,0 +1,26 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: wechat-alert-demo
+
+# ============ 企业微信告警配置 ============
+wechat:
+  alert:
+    # 群机器人（Webhook）
+    group-bot:
+      enabled: true
+      webhook: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=替换为你的key
+
+    # 自建应用（可发给指定人）
+    app:
+      enabled: true
+      corp-id: 替换为你的企业ID
+      agent-id: "替换为你的应用AgentId"
+      secret: 替换为你的应用Secret
+      default-owner: 替换为默认告警接收人userid
+
+logging:
+  level:
+    com.example.wechat: debug

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.example</groupId>
+    <artifactId>wechat-alert-demo</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <name>wechat-alert-demo</name>
+    <description>企业微信告警接入 Demo：群机器人(Webhook) + 自建应用，含 JDK17 原生版与 Spring Boot 3.5 版</description>
+
+    <modules>
+        <module>wechat-alert-core</module>
+        <module>wechat-alert-jdk17</module>
+        <module>wechat-alert-springboot3</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <jackson.version>2.17.2</jackson.version>
+        <slf4j.version>2.0.13</slf4j.version>
+        <spring-boot.version>3.5.0</spring-boot.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- 核心模块 -->
+            <dependency>
+                <groupId>com.example</groupId>
+                <artifactId>wechat-alert-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- Jackson -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+
+            <!-- SLF4J API -->
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>${slf4j.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                    <configuration>
+                        <release>17</release>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>
