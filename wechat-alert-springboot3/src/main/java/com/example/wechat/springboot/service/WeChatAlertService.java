@@ -1,5 +1,6 @@
 package com.example.wechat.springboot.service;
 
+import com.example.wechat.core.exception.WeChatException;
 import com.example.wechat.core.model.MarkdownMessage;
 import com.example.wechat.core.model.TextMessage;
 import com.example.wechat.core.model.WeChatResponse;
@@ -10,6 +11,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 企业微信告警统一服务.
@@ -42,8 +47,11 @@ public class WeChatAlertService {
 
     /**
      * 告警推送到群.
+     *
+     * @throws IllegalStateException 群机器人通道未启用
      */
     public WeChatResponse alertToGroup(String content) {
+        requireText(content, "content");
         WeChatGroupBotClient client = groupBotProvider.getIfAvailable();
         if (client == null) {
             throw new IllegalStateException("群机器人未启用，请配置 wechat.alert.group-bot.enabled=true");
@@ -56,8 +64,11 @@ public class WeChatAlertService {
      *
      * @param toUser  接收人 userid
      * @param content 消息内容
+     * @throws IllegalStateException 自建应用通道未启用
      */
     public WeChatResponse alertToUser(String toUser, String content) {
+        requireText(toUser, "toUser");
+        requireText(content, "content");
         WeChatAppBotClient client = appBotProvider.getIfAvailable();
         if (client == null) {
             throw new IllegalStateException("自建应用未启用，请配置 wechat.alert.app.enabled=true");
@@ -69,32 +80,84 @@ public class WeChatAlertService {
      * 全通道告警：群广播 + 通知配置的默认负责人.
      *
      * <p>如果配置了 {@code wechat.alert.app.default-owner}，会同时给该负责人发一条私信。
+     * 单个通道失败不会影响另一个通道；如果所有已启用通道都失败，则抛出异常，
+     * 避免调用方误以为告警已送达。
+     *
+     * @return 各通道发送结果
+     * @throws IllegalStateException 没有任何可用通道
+     * @throws WeChatException       所有通道均发送失败
      */
-    public void alert(String title, String content) {
-        String markdown = """
-                ## <font color="warning">⚠️ %s</font>
-                %s
-                """.formatted(title, content);
+    public AlertOutcome alert(String title, String content) {
+        requireText(title, "title");
+        requireText(content, "content");
 
-        // 1. 群广播（如果启用）
         WeChatGroupBotClient groupClient = groupBotProvider.getIfAvailable();
-        if (groupClient != null) {
-            try {
-                groupClient.send(MarkdownMessage.of(markdown));
-            } catch (Exception e) {
-                log.error("群广播失败", e);
-            }
-        }
-
-        // 2. 通知默认负责人（如果启用了自建应用且配置了负责人）
         WeChatAppBotClient appClient = appBotProvider.getIfAvailable();
         String defaultOwner = properties.getApp().getDefaultOwner();
-        if (appClient != null && defaultOwner != null && !defaultOwner.isBlank()) {
+        boolean appChannelEnabled = appClient != null && StringUtils.hasText(defaultOwner);
+
+        if (groupClient == null && !appChannelEnabled) {
+            throw new IllegalStateException(
+                    "未启用任何告警通道：请启用 wechat.alert.group-bot 或 wechat.alert.app 并配置 default-owner");
+        }
+
+        // 先完成内容校验（超长等属于调用方参数错误，直接抛 IllegalArgumentException）
+        MarkdownMessage markdown = MarkdownMessage.of("""
+                ## <font color="warning">⚠️ %s</font>
+                %s
+                """.formatted(title, content));
+        TextMessage ownerMessage = appChannelEnabled
+                ? TextMessage.of("【告警待处理】" + title + " - " + content)
+                : null;
+
+        boolean groupSent = false;
+        boolean appSent = false;
+        List<String> failures = new ArrayList<>();
+
+        // 1. 群广播
+        if (groupClient != null) {
             try {
-                appClient.send(defaultOwner, TextMessage.of("【告警待处理】" + title + " - " + content));
+                groupClient.send(markdown);
+                groupSent = true;
             } catch (Exception e) {
-                log.error("私信通知失败", e);
+                log.error("群广播失败", e);
+                failures.add("群机器人: " + e.getMessage());
             }
         }
+
+        // 2. 通知默认负责人
+        if (appChannelEnabled) {
+            try {
+                appClient.send(defaultOwner, ownerMessage);
+                appSent = true;
+            } catch (Exception e) {
+                log.error("私信通知失败", e);
+                failures.add("自建应用: " + e.getMessage());
+            }
+        }
+
+        if (!groupSent && !appSent) {
+            throw new WeChatException("所有告警通道均发送失败: " + String.join("; ", failures));
+        }
+        if (!failures.isEmpty()) {
+            log.warn("部分告警通道发送失败: {}", failures);
+        }
+        return new AlertOutcome(groupSent, appSent, List.copyOf(failures));
+    }
+
+    private static void requireText(String value, String field) {
+        if (!StringUtils.hasText(value)) {
+            throw new IllegalArgumentException(field + " 不能为空");
+        }
+    }
+
+    /**
+     * 全通道告警结果.
+     *
+     * @param groupSent 群机器人是否发送成功
+     * @param appSent   自建应用是否发送成功
+     * @param failures  失败通道及原因
+     */
+    public record AlertOutcome(boolean groupSent, boolean appSent, List<String> failures) {
     }
 }

@@ -11,19 +11,28 @@ import com.example.wechat.core.model.TextMessage;
  *   <li>自建应用 — 可发给指定人</li>
  * </ol>
  *
- * <p>运行前请将下方常量替换为你自己的配置。
+ * <p>运行前通过环境变量或 JVM 系统属性提供配置，未配置的通道会自动跳过：
+ * <pre>
+ * export WECHAT_GROUP_WEBHOOK="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+ * export WECHAT_CORP_ID="wwxxxxxxxxxxxx"
+ * export WECHAT_AGENT_ID="1000002"
+ * export WECHAT_APP_SECRET="xxxxxxxx"
+ * export WECHAT_TO_USER="zhangsan"
+ * mvn exec:java
+ * </pre>
+ *
+ * <p>也可以使用 {@code -DWECHAT_GROUP_WEBHOOK=...} 形式的系统属性。
  */
 public final class DemoMain {
 
     // ========== 群机器人配置 ==========
-    private static final String GROUP_WEBHOOK =
-            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=替换为你的key";
+    private static final String GROUP_WEBHOOK = setting("WECHAT_GROUP_WEBHOOK");
 
     // ========== 自建应用配置 ==========
-    private static final String CORP_ID = "替换为你的企业ID";
-    private static final String AGENT_ID = "替换为你的应用AgentId";
-    private static final String SECRET = "替换为你的应用Secret";
-    private static final String TO_USER = "替换为接收人userid";
+    private static final String CORP_ID = setting("WECHAT_CORP_ID");
+    private static final String AGENT_ID = setting("WECHAT_AGENT_ID");
+    private static final String SECRET = setting("WECHAT_APP_SECRET");
+    private static final String TO_USER = setting("WECHAT_TO_USER");
 
     private DemoMain() {
     }
@@ -42,6 +51,10 @@ public final class DemoMain {
      */
     private static void demoGroupBot() {
         System.out.println("【1】群机器人发送...");
+        if (!configured(GROUP_WEBHOOK)) {
+            System.out.println("    ⏭ 已跳过：未配置 WECHAT_GROUP_WEBHOOK");
+            return;
+        }
         try {
             WeChatGroupBot groupBot = new WeChatGroupBot(GROUP_WEBHOOK);
 
@@ -72,6 +85,10 @@ public final class DemoMain {
      */
     private static void demoAppBot() {
         System.out.println("\n【2】自建应用发送给指定人...");
+        if (!configured(CORP_ID) || !configured(AGENT_ID) || !configured(SECRET) || !configured(TO_USER)) {
+            System.out.println("    ⏭ 已跳过：请配置 WECHAT_CORP_ID / WECHAT_AGENT_ID / WECHAT_APP_SECRET / WECHAT_TO_USER");
+            return;
+        }
         try {
             WeChatAppBot appBot = new WeChatAppBot(CORP_ID, AGENT_ID, SECRET);
 
@@ -79,7 +96,7 @@ public final class DemoMain {
             appBot.sendText(TO_USER, "【告警待处理】订单服务出现异常，请尽快处理");
 
             // 发给多个人（用 | 分隔）
-            appBot.sendMarkdown("zhangsan|lisi", """
+            appBot.sendMarkdown(TO_USER, """
                     ## 系统告警
                     - 服务：payment-service
                     - 错误：支付回调超时
@@ -93,5 +110,18 @@ public final class DemoMain {
         } catch (Exception e) {
             System.out.println("    ❌ 自建应用发送失败: " + e.getMessage());
         }
+    }
+
+    /** 优先读取 JVM 系统属性，其次读取环境变量. */
+    private static String setting(String name) {
+        String value = System.getProperty(name);
+        if (value == null || value.isBlank()) {
+            value = System.getenv(name);
+        }
+        return value;
+    }
+
+    private static boolean configured(String value) {
+        return value != null && !value.isBlank();
     }
 }

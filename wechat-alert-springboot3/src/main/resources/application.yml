@@ -6,20 +6,22 @@ spring:
     name: wechat-alert-demo
 
 # ============ 企业微信告警配置 ============
+# 默认关闭两个通道，未配置密钥时应用也能正常启动；
+# 需要哪个通道就把 enabled 改为 true，并通过环境变量提供密钥（不要提交到仓库）。
 wechat:
   alert:
     # 群机器人（Webhook）
     group-bot:
-      enabled: true
-      webhook: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=替换为你的key
+      enabled: false
+      webhook: ${WECHAT_GROUP_WEBHOOK:}
 
     # 自建应用（可发给指定人）
     app:
-      enabled: true
-      corp-id: 替换为你的企业ID
-      agent-id: "替换为你的应用AgentId"
-      secret: 替换为你的应用Secret
-      default-owner: 替换为默认告警接收人userid
+      enabled: false
+      corp-id: ${WECHAT_CORP_ID:}
+      agent-id: ${WECHAT_AGENT_ID:}
+      secret: ${WECHAT_APP_SECRET:}
+      default-owner: ${WECHAT_DEFAULT_OWNER:}
 
 logging:
   level:

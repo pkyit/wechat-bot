@@ -8,7 +8,9 @@ import com.example.wechat.core.model.WeChatResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -26,24 +28,41 @@ public class WeChatGroupBotClient {
     private final RestClient restClient;
 
     public WeChatGroupBotClient(String webhookUrl, RestClient restClient) {
+        if (!StringUtils.hasText(webhookUrl)) {
+            throw new IllegalArgumentException("群机器人 webhook 不能为空");
+        }
+        if (restClient == null) {
+            throw new IllegalArgumentException("restClient 不能为空");
+        }
         this.webhookUrl = webhookUrl;
         this.restClient = restClient;
     }
 
     /**
      * 发送消息.
+     *
+     * @return 企业微信响应（errcode = 0）
+     * @throws WeChatException 网络异常或接口返回非 0 错误码时抛出
      */
     public WeChatResponse send(WeChatMessage message) {
+        if (message == null) {
+            throw new IllegalArgumentException("message 不能为空");
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("msgtype", message.msgType().code());
         body.put(message.msgType().code(), message.body());
 
-        WeChatResponse response = restClient.post()
-                .uri(webhookUrl)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(WeChatResponse.class);
+        WeChatResponse response;
+        try {
+            response = restClient.post()
+                    .uri(webhookUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(WeChatResponse.class);
+        } catch (RestClientException e) {
+            throw new WeChatException("请求群机器人接口失败: " + e.getMessage(), e);
+        }
 
         if (response == null) {
             throw new WeChatException("群机器人返回空响应");

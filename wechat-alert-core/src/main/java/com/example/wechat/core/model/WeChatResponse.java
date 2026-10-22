@@ -9,9 +9,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * <p>errcode = 0 表示成功，其余为失败（详见企业微信错误码文档）。
  * 用 record 表达不可变值对象，天然线程安全。
  *
- * @param errcode 错误码，0 表示成功
- * @param errmsg  错误信息
- * @param invalidUser 发送失败的用户 userid（仅自建应用消息接口返回）
+ * @param errcode     错误码，0 表示成功
+ * @param errmsg      错误信息
+ * @param invalidUser 发送失败的用户 userid（仅自建应用消息接口返回，多个用 {@code |} 分隔）
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record WeChatResponse(
@@ -23,15 +23,21 @@ public record WeChatResponse(
     /** 成功错误码 */
     public static final int OK = 0;
 
-    /** access_token 失效错误码 */
+    /** access_token 不合法 */
     public static final int TOKEN_INVALID = 40014;
+    /** access_token 已过期 */
     public static final int TOKEN_EXPIRED = 42001;
+    /** 缺少 access_token 参数 */
+    public static final int TOKEN_MISSING = 41001;
 
     public boolean success() {
         return errcode == OK;
     }
 
+    /**
+     * access_token 是否已失效（需要刷新后重试）.
+     */
     public boolean tokenExpired() {
-        return errcode == TOKEN_INVALID || errcode == TOKEN_EXPIRED;
+        return errcode == TOKEN_INVALID || errcode == TOKEN_EXPIRED || errcode == TOKEN_MISSING;
     }
 }

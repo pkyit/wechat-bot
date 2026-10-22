@@ -36,6 +36,9 @@ public final class WeChatGroupBot {
         if (webhookUrl == null || webhookUrl.isBlank()) {
             throw new IllegalArgumentException("webhookUrl 不能为空");
         }
+        if (httpClient == null) {
+            throw new IllegalArgumentException("httpClient 不能为空");
+        }
         this.webhookUrl = webhookUrl;
         this.httpClient = httpClient;
     }
@@ -44,9 +47,12 @@ public final class WeChatGroupBot {
      * 发送任意类型消息.
      *
      * @param message 消息（TextMessage / MarkdownMessage）
-     * @return 是否成功
+     * @return 是否成功（失败会抛出 {@link WeChatException}，返回 false 的情况不会出现）
      */
     public boolean send(WeChatMessage message) {
+        if (message == null) {
+            throw new IllegalArgumentException("message 不能为空");
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("msgtype", message.msgType().code());
         body.put(message.msgType().code(), message.body());
