@@ -7,8 +7,10 @@ import com.example.wechat.core.model.WeChatMessage;
 import com.example.wechat.core.model.WeChatResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -39,11 +41,28 @@ public class WeChatAppBotClient {
 
     private final AtomicReference<CachedToken> tokenCache = new AtomicReference<>(null);
 
+    /** token 刷新互斥锁：防止并发过期时多线程同时请求 gettoken 触发频率限制 */
+    private final Object tokenRefreshLock = new Object();
+
     public WeChatAppBotClient(String corpId, String agentId, String secret, RestClient restClient) {
+        if (corpId == null || corpId.isBlank()) {
+            throw new IllegalArgumentException("corpId 不能为空");
+        }
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalArgumentException("secret 不能为空");
+        }
         this.corpId = corpId;
-        this.agentId = Integer.parseInt(agentId);
+        this.agentId = parseAgentId(agentId);
         this.secret = secret;
         this.restClient = restClient;
+    }
+
+    private static int parseAgentId(String agentId) {
+        try {
+            return Integer.parseInt(agentId);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("agentId 必须是纯数字，请检查 wechat.alert.app.agent-id 配置，实际值: " + agentId, e);
+        }
     }
 
     /**
@@ -69,17 +88,22 @@ public class WeChatAppBotClient {
         return send(toUser, MarkdownMessage.of(content));
     }
 
-    @SuppressWarnings("unchecked")
     private WeChatResponse doSend(Map<String, Object> body, boolean retrying) {
         String token = getAccessToken();
         String url = SEND_MSG_URL.formatted(token);
 
-        WeChatResponse response = restClient.post()
-                .uri(url)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(WeChatResponse.class);
+        WeChatResponse response;
+        try {
+            response = restClient.post()
+                    .uri(url)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(WeChatResponse.class);
+        } catch (RestClientException e) {
+            // 4xx/5xx 或 IO 错误统一包装为 WeChatException，与 JDK 版异常契约一致
+            throw new WeChatException("请求企业微信接口失败: " + e.getMessage(), e);
+        }
 
         if (response == null) {
             throw new WeChatException("自建应用返回空响应");
@@ -88,7 +112,9 @@ public class WeChatAppBotClient {
         // token 失效 → 清缓存重试一次
         if (response.tokenExpired() && !retrying) {
             log.warn("access_token 失效，刷新后重试");
-            tokenCache.set(null);
+            // CAS 清理：只清掉自己刚才使用的那个旧 token，
+            // 避免误清其他线程刚刷新写入的新 token
+            tokenCache.updateAndGet(c -> c != null && c.token().equals(token) ? null : c);
             return doSend(body, true);
         }
 
@@ -100,37 +126,59 @@ public class WeChatAppBotClient {
         return response;
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * 获取 access_token，带缓存.
+     * 先无锁读缓存；过期时在互斥锁内做双重检查后再请求，
+     * 保证同一时刻只有一个线程调用 gettoken，避免并发刷新触发企业微信频率限制。
+     */
     private String getAccessToken() {
         CachedToken cached = tokenCache.get();
         long now = Instant.now().getEpochSecond();
 
-        if (cached != null && now < cached.expireAt() - TOKEN_REFRESH_MARGIN_SECONDS) {
+        if (isValid(cached, now)) {
             return cached.token();
         }
 
-        String url = GET_TOKEN_URL.formatted(corpId, secret);
-        Map<String, Object> result = restClient.get()
-                .uri(url)
-                .retrieve()
-                .body(Map.class);
+        synchronized (tokenRefreshLock) {
+            // 锁内双重检查：排队期间可能已有线程刷新成功
+            cached = tokenCache.get();
+            now = Instant.now().getEpochSecond();
+            if (isValid(cached, now)) {
+                return cached.token();
+            }
 
-        if (result == null) {
-            throw new WeChatException("获取 access_token 返回空响应");
+            String url = GET_TOKEN_URL.formatted(corpId, secret);
+            Map<String, Object> result;
+            try {
+                result = restClient.get()
+                        .uri(url)
+                        .retrieve()
+                        .body(new ParameterizedTypeReference<>() {});
+            } catch (RestClientException e) {
+                throw new WeChatException("获取 access_token 失败: " + e.getMessage(), e);
+            }
+
+            if (result == null) {
+                throw new WeChatException("获取 access_token 返回空响应");
+            }
+
+            int errcode = (int) result.get("errcode");
+            if (errcode != 0) {
+                throw new WeChatException(errcode, String.valueOf(result.get("errmsg")));
+            }
+
+            String token = (String) result.get("access_token");
+            int expiresIn = (int) result.get("expires_in");
+            long expireAt = Instant.now().getEpochSecond() + expiresIn;
+
+            tokenCache.set(new CachedToken(token, expireAt));
+            log.debug("获取新 access_token 成功，有效期 {} 秒", expiresIn);
+            return token;
         }
+    }
 
-        int errcode = (int) result.get("errcode");
-        if (errcode != 0) {
-            throw new WeChatException(errcode, String.valueOf(result.get("errmsg")));
-        }
-
-        String token = (String) result.get("access_token");
-        int expiresIn = (int) result.get("expires_in");
-        long expireAt = Instant.now().getEpochSecond() + expiresIn;
-
-        tokenCache.set(new CachedToken(token, expireAt));
-        log.debug("获取新 access_token 成功，有效期 {} 秒", expiresIn);
-        return token;
+    private static boolean isValid(CachedToken cached, long now) {
+        return cached != null && now < cached.expireAt() - TOKEN_REFRESH_MARGIN_SECONDS;
     }
 
     private record CachedToken(String token, long expireAt) {

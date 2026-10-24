@@ -2,6 +2,7 @@ package com.example.wechat.jdk17;
 
 import com.example.wechat.core.exception.WeChatException;
 import com.example.wechat.core.model.WeChatResponse;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +13,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * 企业微信 HTTP 客户端底层封装.
@@ -28,6 +30,10 @@ import java.util.Map;
 public final class WeChatHttpClient {
 
     private static final Logger log = LoggerFactory.getLogger(WeChatHttpClient.class);
+
+    /** 日志中的 URL 敏感参数脱敏：webhook key 与 access_token 绝不落盘 */
+    private static final Pattern SENSITIVE_PARAM =
+            Pattern.compile("((?:key|access_token|corpsecret)=)[^&\\s]+");
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -57,7 +63,7 @@ public final class WeChatHttpClient {
     public WeChatResponse post(String url, Object body) {
         try {
             String json = objectMapper.writeValueAsString(body);
-            log.debug("POST {} body={}", url, json);
+            log.debug("POST {} body={}", maskUrl(url), json);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -97,11 +103,21 @@ public final class WeChatHttpClient {
             if (response.statusCode() >= 400) {
                 throw new WeChatException("HTTP " + response.statusCode() + ": " + response.body());
             }
-            return objectMapper.readValue(response.body(), Map.class);
+            return objectMapper.readValue(response.body(), new TypeReference<>() {});
         } catch (WeChatException e) {
             throw e;
         } catch (Exception e) {
             throw new WeChatException("请求企业微信接口失败: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * URL 敏感参数脱敏，仅用于日志输出.
+     */
+    static String maskUrl(String url) {
+        if (url == null) {
+            return null;
+        }
+        return SENSITIVE_PARAM.matcher(url).replaceAll("$1****");
     }
 }

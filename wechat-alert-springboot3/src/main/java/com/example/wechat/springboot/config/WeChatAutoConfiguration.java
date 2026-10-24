@@ -7,7 +7,10 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+
+import java.time.Duration;
 
 /**
  * 企业微信告警自动配置.
@@ -33,8 +36,8 @@ public class WeChatAutoConfiguration {
     @ConditionalOnMissingBean
     public WeChatGroupBotClient weChatGroupBotClient(WeChatProperties properties,
                                                      RestClient.Builder restClientBuilder) {
-        RestClient restClient = restClientBuilder.build();
-        return new WeChatGroupBotClient(properties.getGroupBot().getWebhook(), restClient);
+        return new WeChatGroupBotClient(properties.getGroupBot().getWebhook(),
+                buildRestClient(restClientBuilder));
     }
 
     /**
@@ -45,8 +48,21 @@ public class WeChatAutoConfiguration {
     @ConditionalOnMissingBean
     public WeChatAppBotClient weChatAppBotClient(WeChatProperties properties,
                                                  RestClient.Builder restClientBuilder) {
-        RestClient restClient = restClientBuilder.build();
         WeChatProperties.App app = properties.getApp();
-        return new WeChatAppBotClient(app.getCorpId(), app.getAgentId(), app.getSecret(), restClient);
+        return new WeChatAppBotClient(app.getCorpId(), app.getAgentId(), app.getSecret(),
+                buildRestClient(restClientBuilder));
+    }
+
+    /**
+     * 构建带超时保护的 RestClient.
+     *
+     * <p>默认的 SimpleClientHttpRequestFactory 不设置任何超时，
+     * 企业微信接口网络故障时调用线程会永久挂起，必须显式配置。
+     */
+    private static RestClient buildRestClient(RestClient.Builder builder) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(5));
+        factory.setReadTimeout(Duration.ofSeconds(10));
+        return builder.requestFactory(factory).build();
     }
 }

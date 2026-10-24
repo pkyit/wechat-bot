@@ -48,8 +48,19 @@ public final class WeChatAppBot {
     /** token 缓存：不可变值对象，通过 CAS 更新保证线程安全 */
     private final AtomicReference<CachedToken> tokenCache = new AtomicReference<>(null);
 
+    /** token 刷新互斥锁：防止并发过期时多线程同时请求 gettoken 触发频率限制 */
+    private final Object tokenRefreshLock = new Object();
+
     public WeChatAppBot(String corpId, String agentId, String secret) {
-        this(corpId, Integer.parseInt(agentId), secret, new WeChatHttpClient());
+        this(corpId, parseAgentId(agentId), secret, new WeChatHttpClient());
+    }
+
+    private static int parseAgentId(String agentId) {
+        try {
+            return Integer.parseInt(agentId);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("agentId 必须是纯数字，实际值: " + agentId, e);
+        }
     }
 
     public WeChatAppBot(String corpId, int agentId, String secret, WeChatHttpClient httpClient) {
@@ -124,7 +135,9 @@ public final class WeChatAppBot {
         // token 失效，清缓存后重试一次
         if (response.tokenExpired() && !retrying) {
             log.warn("access_token 失效，刷新后重试");
-            tokenCache.set(null);
+            // CAS 清理：只清掉自己刚才使用的那个旧 token，
+            // 避免误清其他线程刚刷新写入的新 token
+            tokenCache.updateAndGet(c -> c != null && c.token().equals(token) ? null : c);
             return doSend(body, true);
         }
 
@@ -139,30 +152,43 @@ public final class WeChatAppBot {
 
     /**
      * 获取 access_token，带缓存.
-     * 双重检查：先读缓存 → 未过期直接返回 → 过期则请求新 token 并 CAS 更新.
+     * 先无锁读缓存；过期时在互斥锁内做双重检查后再请求，
+     * 保证同一时刻只有一个线程调用 gettoken，避免并发刷新触发企业微信频率限制。
      */
     private String getAccessToken() {
         CachedToken cached = tokenCache.get();
         long now = Instant.now().getEpochSecond();
 
-        if (cached != null && now < cached.expireAt() - TOKEN_REFRESH_MARGIN_SECONDS) {
+        if (isValid(cached, now)) {
             return cached.token();
         }
 
-        // token 过期或不存在，请求新的
-        Map<String, Object> result = httpClient.get(GET_TOKEN_URL.formatted(corpId, secret));
-        int errcode = (int) result.get("errcode");
-        if (errcode != 0) {
-            throw new WeChatException(errcode, String.valueOf(result.get("errmsg")));
+        synchronized (tokenRefreshLock) {
+            // 锁内双重检查：排队期间可能已有线程刷新成功
+            cached = tokenCache.get();
+            now = Instant.now().getEpochSecond();
+            if (isValid(cached, now)) {
+                return cached.token();
+            }
+
+            Map<String, Object> result = httpClient.get(GET_TOKEN_URL.formatted(corpId, secret));
+            int errcode = (int) result.get("errcode");
+            if (errcode != 0) {
+                throw new WeChatException(errcode, String.valueOf(result.get("errmsg")));
+            }
+
+            String token = (String) result.get("access_token");
+            int expiresIn = (int) result.get("expires_in");
+            long expireAt = Instant.now().getEpochSecond() + expiresIn;
+
+            tokenCache.set(new CachedToken(token, expireAt));
+            log.debug("获取新 access_token 成功，有效期 {} 秒", expiresIn);
+            return token;
         }
+    }
 
-        String token = (String) result.get("access_token");
-        int expiresIn = (int) result.get("expires_in");
-        long expireAt = Instant.now().getEpochSecond() + expiresIn;
-
-        tokenCache.set(new CachedToken(token, expireAt));
-        log.debug("获取新 access_token 成功，有效期 {} 秒", expiresIn);
-        return token;
+    private static boolean isValid(CachedToken cached, long now) {
+        return cached != null && now < cached.expireAt() - TOKEN_REFRESH_MARGIN_SECONDS;
     }
 
     /**

@@ -37,7 +37,7 @@ public class WeChatAlertController {
      */
     @PostMapping("/group")
     public WeChatResponse sendToGroup(@RequestBody Map<String, String> body) {
-        return alertService.alertToGroup(body.get("content"));
+        return alertService.alertToGroup(requireContent(body));
     }
 
     /**
@@ -53,7 +53,10 @@ public class WeChatAlertController {
     @PostMapping("/user")
     public WeChatResponse sendToUser(@RequestParam String toUser,
                                      @RequestBody Map<String, String> body) {
-        return alertService.alertToUser(toUser, body.get("content"));
+        if (toUser == null || toUser.isBlank()) {
+            throw new IllegalArgumentException("toUser 不能为空");
+        }
+        return alertService.alertToUser(toUser, requireContent(body));
     }
 
     /**
@@ -68,7 +71,20 @@ public class WeChatAlertController {
      */
     @PostMapping("/alert")
     public Map<String, String> alert(@RequestBody Map<String, String> body) {
-        alertService.alert(body.get("title"), body.get("content"));
+        String title = body.get("title");
+        if (title == null || title.isBlank()) {
+            throw new IllegalArgumentException("title 不能为空");
+        }
+        alertService.alert(title, requireContent(body));
         return Map.of("status", "ok", "message", "告警已发送");
+    }
+
+    /** 边界校验：请求体中的 content 必须存在且非空白 */
+    private static String requireContent(Map<String, String> body) {
+        String content = body == null ? null : body.get("content");
+        if (content == null || content.isBlank()) {
+            throw new IllegalArgumentException("content 不能为空");
+        }
+        return content;
     }
 }

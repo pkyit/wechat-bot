@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -26,6 +27,9 @@ public class WeChatGroupBotClient {
     private final RestClient restClient;
 
     public WeChatGroupBotClient(String webhookUrl, RestClient restClient) {
+        if (webhookUrl == null || webhookUrl.isBlank()) {
+            throw new IllegalArgumentException("webhookUrl 不能为空，请检查 wechat.alert.group-bot.webhook 配置");
+        }
         this.webhookUrl = webhookUrl;
         this.restClient = restClient;
     }
@@ -38,12 +42,18 @@ public class WeChatGroupBotClient {
         body.put("msgtype", message.msgType().code());
         body.put(message.msgType().code(), message.body());
 
-        WeChatResponse response = restClient.post()
-                .uri(webhookUrl)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(WeChatResponse.class);
+        WeChatResponse response;
+        try {
+            response = restClient.post()
+                    .uri(webhookUrl)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(WeChatResponse.class);
+        } catch (RestClientException e) {
+            // 4xx/5xx 或 IO 错误统一包装为 WeChatException，与 JDK 版异常契约一致
+            throw new WeChatException("请求企业微信接口失败: " + e.getMessage(), e);
+        }
 
         if (response == null) {
             throw new WeChatException("群机器人返回空响应");
